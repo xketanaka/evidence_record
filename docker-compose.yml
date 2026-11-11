@@ -1,0 +1,38 @@
+# Usage:
+#   docker compose run --rm test                            # run the tests on Ruby 4.0
+#   docker compose run --rm test-3.4                        # run the tests on Ruby 3.4
+#   docker compose run --rm test-3.3                        # run the tests on Ruby 3.3
+#   docker compose run --rm test bundle exec rake test:fetch_vectors
+#   docker compose run --rm test bash                       # open a shell
+x-common: &common
+  # Run as the host user so files written to the bind mount (Gemfile.lock,
+  # built gems, downloaded test vectors) are not owned by root.
+  user: "${UID:-1000}:${GID:-1000}"
+  volumes:
+    - .:/app
+  working_dir: /app
+
+services:
+  test:
+    <<: *common
+    build:
+      context: .
+      args:
+        RUBY_VERSION: "4.0"
+    image: evidence_record-dev:4.0
+
+  test-3.4:
+    <<: *common
+    build:
+      context: .
+      args:
+        RUBY_VERSION: "3.4"
+    image: evidence_record-dev:3.4
+
+  test-3.3:
+    <<: *common
+    build:
+      context: .
+      args:
+        RUBY_VERSION: "3.3"
+    image: evidence_record-dev:3.3

@@ -1,0 +1,8 @@
+.git
+.github
+pkg
+tmp
+coverage
+*.gem
+Gemfile.lock
+test/fixtures/bsi
