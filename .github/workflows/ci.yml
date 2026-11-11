@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ["3.3", "3.4", "4.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - uses: actions/cache@v4
+        with:
+          path: test/fixtures/bsi
+          key: bsi-vectors-${{ hashFiles('test/support/bsi_vectors.rb') }}
+      - run: bundle exec rake test:fetch_vectors
+      - run: bundle exec rake test
+
+  # TODO: interoperability tests against Bouncy Castle (docs/design.md, chapter 9)
