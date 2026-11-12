@@ -136,6 +136,14 @@ module EvidenceRecord
       Verifier.new(self, data).verify_hashes!
     end
 
+    # A time-stamp renewal of this record (TimestampRenewal): a new time-stamp
+    # covering the time-stamps of the last chain. Raises MalformedRecordError
+    # when the record has no ArchiveTimeStamp, and UnsupportedAlgorithmError
+    # when the last chain uses an unsupported hash algorithm.
+    def timestamp_renewal
+      TimestampRenewal.new(self)
+    end
+
     def to_der
       @der
     end

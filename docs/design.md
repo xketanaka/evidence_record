@@ -90,7 +90,11 @@ record2 = renewal.build(res)               # => 新しい Record（最後の Cha
 - 新しい ATS が対象とするのは、**最後の Chain の全 ATS の timeStamp**（DER）を 1 つのデータオブジェクトグループにしたもの（Bouncy Castle と同じ）
   - RFC 4998 が求めているのは「直前の ATS の timeStamp を含むこと」だけだが、Bouncy Castle の検証（`ERSEvidenceRecord#validate`）は、最後の ATS が同じ Chain の前の ATS の timeStamp をすべて含むことを確認する。Bouncy Castle で検証できるように、こちらに合わせる
   - RFC の検証手順（直前の timeStamp が含まれていること）でも問題なく検証できる
-- 同じツリーから作った ER は timeStamp が同じなので、1 つの TSA 応答を `related_to?` の ER どうしで使い回せる
+- 対象の timeStamp が 1 つだけ（最初の更新）のときは、そのハッシュ値をそのまま imprint にし、`reducedHashtree` と `digestAlgorithm` は省く。2 つ以上のときは、それらのハッシュ値だけを並べた 1 段の `reducedHashtree` と `digestAlgorithm` をつける（どちらも Bouncy Castle の `ERSArchiveTimeStampGenerator` と同じ）
+- ハッシュアルゴリズムは最後の Chain のものを使う。アルゴリズムを変えたいときはハッシュツリー更新を使う（3.5）
+- データは不要で、更新の前に ER を検証しない。最後の Chain が空、または Chain 内でアルゴリズムが混在している場合は `MalformedRecordError`、対応していないアルゴリズムなら `UnsupportedAlgorithmError` にする
+- `build` は、生成（3.3）と同じ応答の確認に加えて、新しい TST の genTime が最後の TST の genTime より前なら `TimestampResponseError` にする（そのまま追加すると検証で必ず失敗するため）
+- 同じツリーから作った ER は timeStamp が同じなので、1 つの TSA 応答を `related_to?` の ER どうしで使い回せる。それぞれの ER で `timestamp_renewal` を作り、同じ応答を `build` に渡す（nonce などの確認は、`timestamp_request` を呼んだ更新でだけ行われる）。同じ応答で更新を続ければ、以降の更新も使い回せる
 - v1 では、複数の ER をまとめて更新する API は提供しない（11 章）
 
 ### 3.5 ハッシュツリー更新
