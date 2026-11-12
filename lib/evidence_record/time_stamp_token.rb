@@ -35,8 +35,8 @@ module EvidenceRecord
         raise ParseError, "#{what}: only RFC 3161 time-stamp tokens (CMS SignedData) are supported"
       end
 
-      signed_data = DER.children_of(wrapper, what, size: 1, context: 0)[0]
-      @certificate_ders = parse_signed_data(signed_data, "#{what} (SignedData)")
+      @signed_data = DER.children_of(wrapper, what, size: 1, context: 0)[0]
+      @certificate_ders = parse_signed_data(@signed_data, "#{what} (SignedData)")
       freeze
     end
 
@@ -55,6 +55,17 @@ module EvidenceRecord
 
     def to_der
       @der
+    end
+
+    # Internal: a copy of the token without the CMS crls field, which Ruby's
+    # OpenSSL cannot parse when it holds OCSP responses. The field is not
+    # signed, so removing it does not change the result of verifying the
+    # signature (docs/design.md 7.2). Never hash this copy.
+    def der_without_crls
+      kept = @signed_data.children.reject { _1.context?(1) }
+      return @der if kept.size == @signed_data.children.size
+
+      DER.sequence([DER.encode_oid(ID_SIGNED_DATA), DER.context(0, DER.sequence(kept.map(&:raw)))])
     end
 
     def ==(other)

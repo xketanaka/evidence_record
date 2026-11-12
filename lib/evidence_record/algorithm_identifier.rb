@@ -11,15 +11,12 @@ module EvidenceRecord
   module AlgorithmIdentifier
     module_function
 
-    # node: a SEQUENCE, or a constructed element with an implicit tag.
-    # Returns the OID as a dotted String.
-    def parse(node, what)
-      unless node&.constructed? && (1..2).cover?(node.children.size)
-        raise ParseError, "#{what}: invalid AlgorithmIdentifier"
-      end
-
-      oid = DER.oid(node.children[0], what)
-      params = node.children[1]
+    # node: a SEQUENCE, or with context: n, a constructed element with the
+    # implicit tag [n]. Returns the OID as a dotted String.
+    def parse(node, what, context: nil)
+      children = DER.children_of(node, "#{what} (AlgorithmIdentifier)", size: 1..2, context: context)
+      oid = DER.oid(children[0], what)
+      params = children[1]
       if params && DigestAlgorithm::BY_OID.key?(oid) && !params.universal?(DER::NULL)
         raise ParseError, "#{what}: parameters of #{DigestAlgorithm::BY_OID[oid]} must be absent or NULL"
       end

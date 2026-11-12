@@ -61,9 +61,10 @@ gen.add(EvidenceRecord::DataGroup.new(["meta.xml の中身", "body.pdf の中身
 
 req = gen.timestamp_request(nonce: SecureRandom.random_number(2**64), cert_requested: true)
 # => OpenSSL::Timestamp::Request（利用者が TSA に送る）
-res = OpenSSL::Timestamp::Response.new(post_to_tsa(req.to_der))
+res = post_to_tsa(req.to_der)   # TSA の応答のバイト列（String）
 
 records = gen.build(res)   # => [Record, Record]（add した順）
+# OpenSSL::Timestamp::Response を渡してもよい（6 章）
 records[0].to_der
 ```
 
@@ -132,6 +133,9 @@ record.proven_time   # => Time（最初の ATS の genTime）
 - **2 段階に分ける**: 「ハッシュの連鎖の検証」と「タイムスタンプ自体の正当性」を分ける（5 章）。Bouncy Castle の `validatePresent` と `validate` に相当する
 - **`timestamp_validator:` は必須にする**: 省略できると、署名を確認しない検証が気づかれずに使われるおそれがある。ハッシュの連鎖だけを確認したい場合は `verify_hashes` を明示的に使う
 - **`at:`**: 検証の基準時刻。既定は現在時刻。最後のタイムスタンプは、この時刻で有効かを確認する
+- `verify_hashes` にも、例外を投げる `verify_hashes!` を用意する
+- 対応していないハッシュアルゴリズム（SHA-1 など）の ER は、`verify` でも `false` ではなく `UnsupportedAlgorithmError` にする。「不正」ではなく「このライブラリでは判定できない」ため
+- `PrehashedData` に、検証に必要なアルゴリズムのハッシュがない場合は `ArgumentError` にする（呼び出し方の誤り）
 
 ### 3.7 データの指定
 
@@ -249,6 +253,13 @@ EvidenceRecord::Error < StandardError
 4. **時刻**: genTime が前の ATS 以上で、最後の genTime が `at:` 以前
 5. **タイムスタンプの正当性**: 各 TST について `timestamp_validator.call(token, at: 基準時刻)` を呼ぶ。基準時刻は、その TST を対象に含む次の TST の genTime とし、最後の TST だけは `at:` とする
 
+補足:
+
+- 手順 1 では、ATS の `digestAlgorithm` があれば TST の messageImprint のアルゴリズムと一致すること（RFC 4998 §5.3）、reducedHashtree のハッシュの長さがアルゴリズムに合うことも確認する
+- 「含まれる」は、データ（グループならメンバー全員）のハッシュが最初の PartialHashtree の値の中にあること。最初の PartialHashtree にほかの値（兄弟ノード）があってもよい。グループのメンバー 1 つだけを渡しても、そのデータの存在は証明できるので成功する
+- reducedHashtree がない ATS は、データのハッシュ（グループならメンバーのハッシュをソートして連結したもののハッシュ）が messageImprint と直接一致すればよい
+- 例外の使い分け: 手順 1 と手順 4 の genTime の順序は `MalformedRecordError`、手順 2・3 は `HashMismatchError`、手順 4 の `at:` との比較と手順 5 は `TimestampInvalidError`
+
 ### 5.2 Bouncy Castle との違い
 
 - **任意の形のツリーを検証できる**: Bouncy Castle（`BinaryTreeRootCalculator#recoverRootHash`）は、2 段目以降の PartialHashtree に値が複数あると、それを先にまとめてハッシュしてから前の段の結果と組むので、RFC の手順と結果が違う。BSI のテストデータ TR-ESOR C.2 `ER_OK_SEQ`（2-3-1 の形）では、RFC の手順でだけ検証に通ることを確認した
@@ -257,14 +268,28 @@ EvidenceRecord::Error < StandardError
 
 ### 5.3 タイムスタンプの検証器
 
-- 検証器は `call(token, at:)` を持ち、不正なら例外を投げるオブジェクトとする
+- 検証器は `call(token, at:)` を持つオブジェクトとする。有効なら真を返す。不正なら `TimestampInvalidError` を投げるか、偽（`false` / `nil`）を返す
+  - 偽を返した場合も不正として扱う。真を返し忘れた検証器が、気づかれずにすべてを通してしまわないようにするため（fail closed）
+  - それ以外の例外は捕まえない。検証器のバグ（`NoMethodError` など）が「不正」に化けて隠れないようにするため
+  - `verify!` は、検証器が投げた `TimestampInvalidError` を `chain_index` / `ats_index` を付けて投げ直す（元の例外は `cause` に入る）
 - 同梱する `TimestampValidator::OpenSSL` は、`OpenSSL::X509::Store` を受け取り、署名と証明書チェーンを `at:` の時刻で検証する
+  - 中身は `OpenSSL::Timestamp::Response#verify`。署名、ESS signing certificate による署名者証明書の確認、証明書の用途（timeStamping）、信頼できる証明書までのチェーンを確認する
+  - `crls` を取り除いたトークンを TimeStampResp に包んで渡す（7.2）。照合用の Request はトークン自身の messageImprint と nonce から作る（messageImprint とハッシュの連鎖の照合は手順 2・3 で済んでいる）
+  - 呼び出しのたびに Store の検証時刻（`Store#time=`）を書き換える。Ruby の openssl には検証時刻を Store を変えずに渡す方法がないため。ドキュメントに、この検証器専用の Store を渡すよう書く
 - 失効の確認（CRL / OCSP）や、アルゴリズムが危殆化していないかの判定は v1 では行わない。必要な利用者は、独自の検証器を渡す。ドキュメントには、同梱の検証器でできることとできないことを明記する
 
 ## 6. TSA とのやりとり
 
 - 要求は `OpenSSL::Timestamp::Request` で作る。`nonce` / `cert_requested` / `policy_id` は呼び出し側が指定できる
-- 応答は `OpenSSL::Timestamp::Response` を受け取る。ただし、TST の解析と署名検証は 7.2 の回避策を通して行う
+- 応答は、TimeStampResp のバイト列（String）か `OpenSSL::Timestamp::Response` で受け取る（`build` など、TSA の応答を受け取るメソッドすべて）
+  - String を基本とする。Ruby の `OpenSSL::Timestamp::Response` は、`crls` に OCSP 応答を含む応答を解析できず、そうした TSA では `Response` オブジェクトを作れないため（7.2）
+  - `OpenSSL::Timestamp::Response` を渡された場合は、`to_der` で得たバイト列を同じように扱う
+  - 応答の解析（status の確認、トークンの取り出し）はライブラリが自前の DER リーダーで行う
+- **長さの書き方が BER の応答も受け付ける**（7.2）
+  - 不定長と、最短でない長さを定長・最短の形に直してから読む。直すのは長さの書き方だけで、中身のバイト列は変えない
+  - ER に入るのは、直した後のトークン（DER）。応答の外側（status など）は ER に残らない
+  - 長さを直しても DER にならない応答（constructed な OCTET STRING、SET の順序、BOOLEAN の値など）は `TimestampResponseError` にする。それらを直すと中身が変わり、トークンに含まれる証明書の署名などを壊すおそれがあるため。Bouncy Castle はトークン全体を DER に書き直すが、実際に見つかった例（BSI のテストデータの TSA）は外側の不定長だけだったので、必要な範囲に絞る
+  - `Record.from_der` は、これまでどおり DER だけを受け付ける。BER を受け付けるのは TSA の応答という入口だけ
 - テストでは `OpenSSL::Timestamp::Factory` でローカルの TSA を作る
 
 ## 7. ASN.1 とバイト列
@@ -294,7 +319,7 @@ EvidenceRecord::Error < StandardError
   - 署名の検証では、`crls` を取り除いたコピーを作って `OpenSSL::Timestamp::Response#verify` に渡す。`crls` は署名の対象外なので、取り除いても検証結果は変わらない。BSI のテストデータ（RSASSA-PSS の証明書チェーン）で動作を確認した
   - 取り除いたコピーは検証のためだけに使い、ハッシュの計算には使わない（7.1）
 
-- **TSA が返すタイムスタンプが BER のことがある**: BSI のテストデータにある、TSA から得たタイムスタンプトークン（`2Chains3ATS/*.tsr`）は、ContentInfo の外側が不定長で符号化されている。同じテストデータの ER には、これを定長に直したもの（DER）が入っていることを確認した。署名の対象（signedAttrs と eContent の中身）は変わらないので、ER に入れるときに DER に直す必要がある（生成と更新で対応する。11 章）
+- **TSA が返すタイムスタンプが BER のことがある**: BSI のテストデータにある、TSA から得たタイムスタンプトークン（`2Chains3ATS/*.tsr`）は、ContentInfo の外側が不定長で符号化されている。同じテストデータの ER には、これを定長に直したもの（DER）が入っていることを確認した。署名の対象（signedAttrs と eContent の中身）は変わらないので、ER に入れるときに DER に直す必要がある（生成と更新で対応する。6 章）
 
 ### 7.3 読み込むが生成しないフィールド
 
@@ -328,6 +353,11 @@ EvidenceRecord::Error < StandardError
     | TR-ESOR C.2 `ER_NOK_*` | 失敗 | 書き換えられたハッシュを検出できるか |
 
   - 証明書はすでに期限が切れているので、タイムスタンプの検証は genTime の時刻で行う
+  - 信頼する証明書には、トークンに含まれている自己署名の証明書（BSI のテスト用 TSA のルート）を使う。`2Chains3ATS` は 2 つ目の Chain で TSA が変わり、ルートも別になる
+  - 実装して確認した結果:
+    - ERS-Testtool の 4 つは、`BIN.bin` で署名の検証まで含めて成功する
+    - TR-ESOR C.2 の ER は `BIN.bin` ではなく、テストデータに含まれない 2 つの文書のグループが対象だった。最初の PartialHashtree の値から `PrehashedData` のグループを作ると、`ER_OK_INIT` / `ER_OK_CHAIN` は成功し、`ER_NOK_INIT` は Chain 0 の ATS 0、`ER_NOK_CHAIN` は Chain 0 の ATS 1 で `HashMismatchError` になる
+    - `ER_OK_SEQ` / `ER_NOK_SEQ` の 2 つ目の Chain は SHA-384 で、文書の SHA-384 ハッシュがないため最後までは検証できない（n 分木の部分は、ルートが messageImprint と一致することをハッシュツリーのテストで確認している）
 - **Bouncy Castle との相互運用テスト**を CI に入れる
   - 双方向で確認する
     - このライブラリで生成・更新した ER を、Bouncy Castle で検証する（`validatePresent` と `validate`）
@@ -381,9 +411,8 @@ EvidenceRecord::Error < StandardError
   - 対応しない（4.4）
 - [x] Bouncy Castle との相互運用テストを CI に入れるか
   - 入れる。双方向で確認する（9 章）
-- [ ] `Generator#build` などが受け取る TSA 応答の型（7.2）
-  - Ruby の `OpenSSL::Timestamp::Response` は、`crls` に OCSP 応答を含む応答を解析できない（BSI のテストデータの TSA 応答も読めない）。`OpenSSL::Timestamp::Response` だけを受け取る API だと、そうした TSA を使えない
-  - 案: TimeStampResp の DER（String）も受け取り、トークンは自前で取り出して DER に直す。生成の実装の前に決める
+- [x] `Generator#build` などが受け取る TSA 応答の型（7.2）
+  - TimeStampResp のバイト列（String）を基本とし、`OpenSSL::Timestamp::Response` も受け取る。長さの書き方が BER の応答は受け付けて、トークンを DER に直してから ER に入れる（6 章）
 - [ ] タイムスタンプ更新で、最後の Chain の全 timeStamp を対象に含める方針（3.4）が、Bouncy Castle の実装と実際に互換か
   - 実装時に、相互運用テストで確認する
 - [x] `verify` に結果オブジェクト（各 ATS の genTime、使ったアルゴリズムなど）を返す版を用意するか

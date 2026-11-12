@@ -13,6 +13,8 @@ require_relative "evidence_record/time_stamp_token"
 require_relative "evidence_record/archive_time_stamp"
 require_relative "evidence_record/chain"
 require_relative "evidence_record/record"
+require_relative "evidence_record/verifier"
+require_relative "evidence_record/timestamp_validator"
 
 # Evidence Record Syntax (ERS), RFC 4998.
 module EvidenceRecord

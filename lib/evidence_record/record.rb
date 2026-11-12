@@ -95,6 +95,47 @@ module EvidenceRecord
       !mine.nil? && !theirs.nil? && mine.timestamp == theirs.timestamp
     end
 
+    # Verifies that this record proves the existence of data (docs/design.md
+    # 3.6, 5.1): the hash chain from data to every time-stamp, the order of
+    # the time-stamps, and the validity of each time-stamp, checked with
+    # timestamp_validator (see TimestampValidator).
+    #
+    # data is a String, a PrehashedData or a DataGroup. at is the time of
+    # verification; the last time-stamp must be valid at that time.
+    #
+    # Returns true or false. Invalid arguments raise ArgumentError, and
+    # unsupported hash algorithms raise UnsupportedAlgorithmError.
+    def verify(data:, timestamp_validator:, at: Time.now)
+      verify!(data: data, timestamp_validator: timestamp_validator, at: at)
+    rescue VerificationError
+      false
+    end
+
+    # Like #verify, but raises a VerificationError telling why and where the
+    # verification failed.
+    def verify!(data:, timestamp_validator:, at: Time.now)
+      unless timestamp_validator.respond_to?(:call)
+        raise ArgumentError, "timestamp_validator must respond to call(token, at:)"
+      end
+      raise ArgumentError, "at must be a Time, got #{at.class}" unless at.is_a?(Time)
+
+      Verifier.new(self, data).verify!(timestamp_validator: timestamp_validator, at: at)
+    end
+
+    # Verifies only the structure and the hash chain from data to every
+    # time-stamp. Neither the signatures nor the times of the time-stamps are
+    # checked, so this alone does not prove anything about time.
+    def verify_hashes(data:)
+      verify_hashes!(data: data)
+    rescue VerificationError
+      false
+    end
+
+    # Like #verify_hashes, but raises a VerificationError.
+    def verify_hashes!(data:)
+      Verifier.new(self, data).verify_hashes!
+    end
+
     def to_der
       @der
     end

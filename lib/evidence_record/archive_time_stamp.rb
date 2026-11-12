@@ -66,7 +66,7 @@ module EvidenceRecord
 
         previous_tag = tag
         case tag
-        when 0 then @declared_digest_algorithm_oid = AlgorithmIdentifier.parse(field, "#{what} digestAlgorithm")
+        when 0 then @declared_digest_algorithm_oid = AlgorithmIdentifier.parse(field, "#{what} digestAlgorithm", context: 0)
         when 1 then @attributes = parse_attributes(field, "#{what} attributes")
         when 2 then @reduced_hashtree = parse_reduced_hashtree(field, "#{what} reducedHashtree")
         end
