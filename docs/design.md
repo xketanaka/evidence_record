@@ -138,15 +138,16 @@ record.proven_time   # => Time（最初の ATS の genTime）
 | 渡すもの | 扱い |
 |---|---|
 | `String` | バイト列として扱う（パスとしては扱わない） |
-| `IO`（`#read` を持つもの） | 最後まで読んでハッシュする |
-| `Pathname` | ファイルの中身をハッシュする |
 | `PrehashedData` | 外部で計算済みのハッシュ値（3.7.1） |
-| `DataGroup` | データオブジェクトグループ。メンバーは上の 4 種類 |
+| `DataGroup` | データオブジェクトグループ。メンバーは上の 2 種類 |
 
 - データを受け取る引数（`Generator#add`、`verify` / `verify_hashes` の `data:`、`hash_tree_renewal` の `data:`）は、すべて上の表のどれでも受け付ける
+- **IO や Pathname は受け付けない**（ct_merkle と同じく、データは String で受け取る）
+  - 大きなファイルは、利用者がハッシュを計算して `PrehashedData` で渡す（例: `OpenSSL::Digest.new("SHA256").file(path).digest`）。ER の葉はただの `H(data)` なので、ct_merkle（`H(0x00 ‖ data)`）より計算は簡単である
+  - 当初は IO と Pathname も受け付ける案だった（Bouncy Castle の `ERSInputStreamData` / `ERSFileData` に相当）。しかし、受け付ける理由は大きなファイルを扱う手間を省くことだけで、`PrehashedData` で代わりになる。IO は一度読むと位置を戻す必要があり、戻せない IO ではエラーにするしかないなど扱いが複雑になるため、やめた。テストデータ（BSI、Bouncy Castle）も小さく、`File.binread` で足りる
 - String をパスとして扱わないのは、ct_merkle で hex / base64 を自動判別しなかったのと同じ理由。取り違えたときに気づけなくなる
 - String はエンコーディングに関係なくバイト列として扱う（ct_merkle と同じ）
-- ハッシュはアルゴリズムごとにキャッシュする（ハッシュツリー更新では同じデータを複数のアルゴリズムでハッシュするため。Bouncy Castle の `ERSCachingData` と同じ）
+- ハッシュはアルゴリズムごとにキャッシュする（ハッシュツリー更新や検証では、同じデータを複数のアルゴリズムでハッシュするため。Bouncy Castle の `ERSCachingData` と同じ）
 - グループの入れ子（Bouncy Castle の `ERSDirectoryDataGroup`）は v1 では扱わない
 
 #### 3.7.1 計算済みのハッシュ（`PrehashedData`）

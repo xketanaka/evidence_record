@@ -1,10 +1,9 @@
 # frozen_string_literal: true
 
-require "pathname"
-
 module EvidenceRecord
   # Hash values of a data object computed elsewhere, given per algorithm
-  # (docs/design.md 3.7.1).
+  # (docs/design.md 3.7.1). Use it for data that is not at hand or too large
+  # to read into a String.
   #
   #   EvidenceRecord::PrehashedData.new(sha256: d256, sha512: d512)
   #
@@ -29,7 +28,7 @@ module EvidenceRecord
       @hashes.keys
     end
 
-    # The hash for algorithm (a Symbol or DigestAlgorithm) as a Digest.
+    # The hash for algorithm (a Symbol or DigestAlgorithm) as a Digest, or nil.
     def [](algorithm)
       bytes = @hashes[DigestAlgorithm.fetch(algorithm)]
       bytes && Digest.new(bytes)
@@ -41,8 +40,8 @@ module EvidenceRecord
   end
 
   # A data object group: several data objects covered by one Evidence Record
-  # (RFC 4998 §4.2). Members are Strings, IOs, Pathnames or PrehashedData;
-  # groups cannot be nested.
+  # (RFC 4998 §4.2). Members are Strings or PrehashedData; groups cannot be
+  # nested.
   class DataGroup
     attr_reader :members
 
@@ -64,20 +63,17 @@ module EvidenceRecord
     end
   end
 
-  # Internal: turns the values accepted as data (String, IO, Pathname,
-  # PrehashedData, DataGroup) into objects that compute hash values, caching
-  # them per algorithm.
+  # Internal: turns the values accepted as data (String, PrehashedData,
+  # DataGroup) into objects that compute hash values, caching them per
+  # algorithm.
   module DataSource
-    CHUNK_SIZE = 64 * 1024
-
     module_function
 
     def check!(value, name = "data")
-      return if value.is_a?(String) || value.is_a?(Pathname) || value.is_a?(PrehashedData) ||
-                value.respond_to?(:read)
+      return if value.is_a?(String) || value.is_a?(PrehashedData)
 
       raise ArgumentError,
-            "#{name} must be a String, an IO, a Pathname, an EvidenceRecord::PrehashedData " \
+            "#{name} must be a String, an EvidenceRecord::PrehashedData " \
             "or an EvidenceRecord::DataGroup, got #{value.class}"
     end
 
@@ -96,8 +92,6 @@ module EvidenceRecord
       def initialize(value)
         @value = value
         @cache = {}
-        @io_start = value.respond_to?(:pos) ? safe_pos(value) : nil if io?
-        @io_consumed = false
       end
 
       def group?
@@ -107,8 +101,7 @@ module EvidenceRecord
       # The hash of the data object, as a BINARY String.
       def digest(algorithm)
         algorithm = DigestAlgorithm.fetch(algorithm)
-        prefetch([algorithm]) unless @cache.key?(algorithm)
-        @cache.fetch(algorithm)
+        @cache[algorithm] ||= compute(algorithm)
       end
 
       # [hash]; the list that becomes the first partial hash tree.
@@ -116,57 +109,17 @@ module EvidenceRecord
         [digest(algorithm)]
       end
 
-      # Computes the hashes for several algorithms, reading the data only once.
-      def prefetch(algorithms)
-        missing = algorithms.map { DigestAlgorithm.fetch(_1) }.uniq.reject { @cache.key?(_1) }
-        return if missing.empty?
-
-        case @value
-        when PrehashedData then prehashed(missing)
-        when String then missing.each { |a| @cache[a] = a.digest(@value).freeze }
-        when Pathname then File.open(@value, "rb") { |f| stream(f, missing) }
-        else read_io(missing)
-        end
-      end
-
       private
 
-      def io?
-        !(@value.is_a?(String) || @value.is_a?(Pathname) || @value.is_a?(PrehashedData))
-      end
-
-      def safe_pos(io)
-        io.pos
-      rescue StandardError
-        nil
-      end
-
-      def prehashed(missing)
-        missing.each do |a|
-          d = @value[a] or raise ArgumentError, "PrehashedData has no #{a} hash, which is required here"
-          @cache[a] = d.to_binary
+      def compute(algorithm)
+        case @value
+        when PrehashedData
+          d = @value[algorithm] or
+            raise ArgumentError, "PrehashedData has no #{algorithm} hash, which is required here"
+          d.to_binary
+        else
+          algorithm.digest(@value).freeze
         end
-      end
-
-      def read_io(missing)
-        if @io_consumed
-          unless @io_start && @value.respond_to?(:seek)
-            raise ArgumentError,
-                  "the IO has already been read and cannot be rewound to hash it with #{missing.join(', ')}"
-          end
-
-          @value.seek(@io_start)
-        end
-        @io_consumed = true
-        stream(@value, missing)
-      end
-
-      def stream(io, missing)
-        digests = missing.map(&:new_openssl_digest)
-        while (chunk = io.read(CHUNK_SIZE))
-          digests.each { _1.update(chunk) }
-        end
-        missing.zip(digests) { |a, d| @cache[a] = d.digest.freeze }
       end
     end
 
@@ -180,10 +133,6 @@ module EvidenceRecord
 
       def group?
         true
-      end
-
-      def prefetch(algorithms)
-        @members.each { _1.prefetch(algorithms) }
       end
 
       def member_digests(algorithm)

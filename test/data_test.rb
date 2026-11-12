@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "pathname"
 require "stringio"
-require "tempfile"
 
 class DataTest < Minitest::Test
   DS = EvidenceRecord::DataSource
@@ -14,60 +14,24 @@ class DataTest < Minitest::Test
 
   def test_string_is_hashed_as_bytes_regardless_of_encoding
     utf8 = "データ"
-    binary = utf8.b
-    assert_equal sha("SHA256", binary), DS.wrap(utf8).digest(:sha256)
-    assert_equal DS.wrap(utf8).digest(:sha256), DS.wrap(binary).digest(:sha256)
+    assert_equal sha("SHA256", utf8.b), DS.wrap(utf8).digest(:sha256)
+    assert_equal DS.wrap(utf8).digest(:sha256), DS.wrap(utf8.b).digest(:sha256)
+  end
+
+  def test_every_supported_algorithm
+    DA::ALL.each do |a|
+      assert_equal sha(a.name.to_s.upcase, "abc"), DS.wrap("abc").digest(a)
+    end
   end
 
   def test_string_is_not_treated_as_a_path
-    Tempfile.create("er") do |f|
-      f.write("content")
-      f.flush
-      assert_equal sha("SHA256", f.path), DS.wrap(f.path).digest(:sha256)
-      assert_equal sha("SHA256", "content"), DS.wrap(Pathname(f.path)).digest(:sha256)
-    end
+    assert_equal sha("SHA256", __FILE__), DS.wrap(__FILE__).digest(:sha256)
   end
 
-  def test_io_and_pathname_match_string
-    data = Random.new(1).bytes(200_000) # larger than one chunk
-    Tempfile.create("er", binmode: true) do |f|
-      f.write(data)
-      f.flush
-      DA::ALL.each do |a|
-        expected = sha(a.name.to_s.upcase, data)
-        assert_equal expected, DS.wrap(data).digest(a)
-        assert_equal expected, DS.wrap(Pathname(f.path)).digest(a)
-        assert_equal expected, DS.wrap(StringIO.new(data)).digest(a)
-      end
-    end
-  end
-
-  def test_io_is_read_once_for_prefetched_algorithms
-    io = StringIO.new("abc")
-    src = DS.wrap(io)
-    src.prefetch(%i[sha256 sha512])
-    assert io.eof?
-    assert_equal sha("SHA256", "abc"), src.digest(:sha256)
-    assert_equal sha("SHA512", "abc"), src.digest(:sha512)
-  end
-
-  def test_seekable_io_is_rewound_to_its_start_for_another_algorithm
-    io = StringIO.new("skip-abc")
-    io.read(5)
-    src = DS.wrap(io)
-    assert_equal sha("SHA256", "abc"), src.digest(:sha256)
-    assert_equal sha("SHA384", "abc"), src.digest(:sha384)
-  end
-
-  def test_non_seekable_io_cannot_be_read_twice
-    reader = Class.new do
-      def initialize(data) = @io = StringIO.new(data)
-      def read(n) = @io.read(n)
-    end
-    src = DS.wrap(reader.new("abc"))
-    assert_equal sha("SHA256", "abc"), src.digest(:sha256)
-    assert_equal sha("SHA256", "abc"), src.digest(:sha256) # cached
-    assert_raises(ArgumentError) { src.digest(:sha512) }
+  def test_digests_are_cached_per_algorithm
+    src = DS.wrap("abc")
+    assert_same src.digest(:sha256), src.digest(:sha256)
+    refute_equal src.digest(:sha256), src.digest(:sha512)
   end
 
   def test_prehashed_data
@@ -90,8 +54,9 @@ class DataTest < Minitest::Test
   end
 
   def test_data_group
-    group = EvidenceRecord::DataGroup.new(["a", StringIO.new("b"), EvidenceRecord::PrehashedData.new(sha256: sha("SHA256", "c"))])
+    group = EvidenceRecord::DataGroup.new(["a", "b", EvidenceRecord::PrehashedData.new(sha256: sha("SHA256", "c"))])
     assert_equal 3, group.size
+    assert group.frozen?
     src = DS.wrap(group)
     assert src.group?
     assert_equal %w[a b c].map { sha("SHA256", _1) }, src.member_digests(:sha256)
@@ -101,11 +66,13 @@ class DataTest < Minitest::Test
     assert_raises(ArgumentError) { EvidenceRecord::DataGroup.new([]) }
     assert_raises(ArgumentError) { EvidenceRecord::DataGroup.new("a") }
     assert_raises(ArgumentError) { EvidenceRecord::DataGroup.new([EvidenceRecord::DataGroup.new(["a"])]) }
-    assert_raises(ArgumentError) { EvidenceRecord::DataGroup.new([1]) }
+    assert_raises(ArgumentError) { EvidenceRecord::DataGroup.new([StringIO.new("a")]) }
   end
 
   def test_unsupported_data
     assert_raises(ArgumentError) { DS.wrap(123) }
+    assert_raises(ArgumentError) { DS.wrap(StringIO.new("abc")) }
+    assert_raises(ArgumentError) { DS.wrap(Pathname(__FILE__)) }
     assert_raises(ArgumentError) { DS.wrap(EvidenceRecord::Digest.new("x" * 32)) }
   end
 end
