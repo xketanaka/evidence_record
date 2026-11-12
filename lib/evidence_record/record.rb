@@ -144,6 +144,19 @@ module EvidenceRecord
       TimestampRenewal.new(self)
     end
 
+    # A hash-tree renewal of this record (HashTreeRenewal): a new chain with
+    # the hash algorithm digest_algorithm (:sha256, :sha384 or :sha512),
+    # covering data and the older chains.
+    #
+    # data is a String, a PrehashedData or a DataGroup, as for #verify; a
+    # PrehashedData needs hashes for the algorithms of the record and for
+    # digest_algorithm. The record is first checked against data with
+    # #verify_hashes!, which raises a VerificationError when they do not
+    # match.
+    def hash_tree_renewal(data:, digest_algorithm:)
+      HashTreeRenewal.new(self, data: data, digest_algorithm: digest_algorithm)
+    end
+
     def to_der
       @der
     end

@@ -17,7 +17,9 @@ require_relative "evidence_record/verifier"
 require_relative "evidence_record/timestamp_validator"
 require_relative "evidence_record/timestamp_exchange"
 require_relative "evidence_record/generator"
+require_relative "evidence_record/renewal"
 require_relative "evidence_record/timestamp_renewal"
+require_relative "evidence_record/hash_tree_renewal"
 
 # Evidence Record Syntax (ERS), RFC 4998.
 module EvidenceRecord

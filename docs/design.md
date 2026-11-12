@@ -116,8 +116,13 @@ record2 = renewal.build(res)               # => 新しい Record（新しい Cha
   - 実際の実装は固定順である。BSI のテストデータ（ERS-Testtool `2Chains3ATS`）は固定順でだけ一致し、ソート順では一致しないことを確認した（この例では `H(d) > ha` なので、2 つの順序の結果が異なり区別できる）。Bouncy Castle（`ERSUtil.concatPreviousHashes`）も固定順
   - 生成は、相手の実装で検証できることを優先して固定順にする。検証は、Figure 4 や Errata に従った実装が作った ER も読めるように、両方を試す。どちらか一方で一致すればよいとしても、攻撃者は 2 通りのどちらかについて衝突を作る必要があり、安全性はほとんど変わらない
   - データオブジェクトグループの場合は、メンバーごとに `H(H(d_i) ‖ ha)` を計算する（Bouncy Castle と同じ）
+  - BSI のテストデータ（ERS-Testtool の `1Chain2ATS/testRenewal.ers` と `2Chains3ATS`）の 2 つ目の Chain は、`1Chain2ATS/BIN_ER.ers` を SHA-512 でハッシュツリー更新したものである。この実装で計算した値は、前者の imprint と一致し、後者の縮小ハッシュツリーの葉にも含まれることを確認した
 - 渡されたデータが今の ER で検証できない場合は、更新を始める前にエラーにする（間違ったデータで更新すると、以降の検証がすべて失敗するため。Bouncy Castle と同じ）
-- 新しいアルゴリズムは、ER の `digestAlgorithms` にも追加する
+  - `hash_tree_renewal` の中で `verify_hashes!` を呼び、その `VerificationError`（`HashMismatchError` など）をそのまま上げる
+  - TST の署名と時刻は確認しない（`timestamp_validator` を受け取らない）。必要なら、更新の前に `verify` で確認する
+- `PrehashedData` を渡す場合は、ER の各アルゴリズムと新しいアルゴリズムのハッシュ値が必要。足りなければ `ArgumentError`（3.6 と同じ）
+- 新しいアルゴリズムは、ER の `digestAlgorithms` にも追加する（すでにあれば追加しない）。今と同じアルゴリズムを指定することも禁止しない
+- 新しい ATS の形はタイムスタンプ更新と同じ。値が 1 つ（データオブジェクト 1 つ）なら `reducedHashtree` と `digestAlgorithm` を省き、データオブジェクトグループならメンバーの値を並べた 1 段の `reducedHashtree` をつける。`build` が genTime を確認するのも同じ（3.4）
 
 ### 3.6 検証
 
