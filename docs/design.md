@@ -177,7 +177,9 @@ gen.add(EvidenceRecord::DataGroup.new([pre_meta, pre_body]))      # グループ
 
 - `Record#related_to?(other)`: 最初の ATS の timeStamp が同じか（同じツリーから作られたか）。更新の応答を使い回すときに使う
 - `Record#chains` / `Chain#archive_timestamps` / `ArchiveTimeStamp#reduced_hashtree` / `ArchiveTimeStamp#timestamp`: 構造を読むための属性
-- `TimeStampToken#gen_time` / `#message_imprint` / `#hash_algorithm` / `#serial_number` / `#policy_id` / `#certificates` / `#to_der`
+- `TimeStampToken#gen_time` / `#message_imprint` / `#hash_algorithm` / `#serial_number` / `#policy_id` / `#nonce` / `#certificates` / `#to_der`
+- 対応していないアルゴリズムの ER も読めるように、アルゴリズムは OID の文字列でも取得できる（`Record#digest_algorithm_oids`、`ArchiveTimeStamp#digest_algorithm_oid`、`TimeStampToken#hash_algorithm_oid`）。`DigestAlgorithm` を返すメソッドは、対応していない OID なら `UnsupportedAlgorithmError` にする
+- `Record#crypto_infos` / `#encryption_info` / `ArchiveTimeStamp#attributes` は、読み込んだ DER（タグを含む）をそのまま返す（7.3）
 
 ### 3.9 例外
 
@@ -271,7 +273,17 @@ EvidenceRecord::Error < StandardError
 
 - ハッシュの対象になるのは、ATS の timeStamp（タイムスタンプ更新）と ATS Sequence（ハッシュツリー更新）の DER。解析したものを再エンコードすると、元のバイト列と一致しない場合がある
 - データ構造クラスは、読み込んだときの DER をそのまま保持し、`to_der` はそれを返す
-- 読み込み時に「解析して再エンコードしたものが元と一致する」ことを確認し、一致しなければ（DER でなければ）`ParseError` にする。RFC 4998 は DER を前提としており、BER を受け付けると上記のハッシュの対象があいまいになる
+- 読み込み時に ER 全体が DER であることを確認し、DER でなければ `ParseError` にする。書き出す ER も常に DER にする
+  - RFC 4998 が DER を明記しているのは、ハッシュツリー更新で `ha` を計算するときの ArchiveTimeStampChain だけである（§5.2 "The ArchiveTimeStampChains used are DER encoded"）
+  - timeStamp は、RFC には明記がないが、次のタイムスタンプ更新でハッシュされる。Bouncy Castle は DER に再エンコードしてからハッシュするので、BER のままでは結果が食い違う
+  - それ以外のフィールド（version、digestAlgorithms、cryptoInfos、encryptionInfo）はハッシュの対象にならず、RFC 上は BER でも差し支えない。それでも、このライブラリの方針として ER 全体を DER に限る。これまでに確認した実装（BSI の ERS-Testtool、Bouncy Castle）が出力する ER はすべて DER であり、一部だけ BER を許すと受け付ける範囲の判断が複雑になるため
+- DER の確認と、各要素の元のバイト列の取り出しには、自前の小さな DER リーダー（`EvidenceRecord::DER`、内部用）を使う
+  - 当初は「`OpenSSL::ASN1` で解析して再エンコードしたものが元と一致するか」で確認する予定だったが、次の理由でやめた
+    - `OpenSSL::ASN1` は不定長や constructed な OCTET STRING をそのまま再エンコードするので、BER を見逃す
+    - GeneralizedTime の小数秒を捨てるので、正しい DER が一致しなくなる。BSI のテストデータの genTime にも小数秒がある（`20170210140936.5Z` など）
+  - 確認する内容: 長さが最短形式であること、不定長でないこと、プリミティブ型が constructed でないこと、BOOLEAN / INTEGER / NULL / BIT STRING / OID の値の符号化、UNIVERSAL の SET の要素がソートされていること、時刻の形式、末尾に余分なデータがないこと
+  - 暗黙タグ付きの SET（CMS の `certificates` など）の並び順は、型の情報がないため確認しない
+- genTime も自前で読み、小数秒を保持する
 
 ### 7.2 Ruby の OpenSSL で TST を読めない問題
 
@@ -282,6 +294,8 @@ EvidenceRecord::Error < StandardError
   - 署名の検証では、`crls` を取り除いたコピーを作って `OpenSSL::Timestamp::Response#verify` に渡す。`crls` は署名の対象外なので、取り除いても検証結果は変わらない。BSI のテストデータ（RSASSA-PSS の証明書チェーン）で動作を確認した
   - 取り除いたコピーは検証のためだけに使い、ハッシュの計算には使わない（7.1）
 
+- **TSA が返すタイムスタンプが BER のことがある**: BSI のテストデータにある、TSA から得たタイムスタンプトークン（`2Chains3ATS/*.tsr`）は、ContentInfo の外側が不定長で符号化されている。同じテストデータの ER には、これを定長に直したもの（DER）が入っていることを確認した。署名の対象（signedAttrs と eContent の中身）は変わらないので、ER に入れるときに DER に直す必要がある（生成と更新で対応する。11 章）
+
 ### 7.3 読み込むが生成しないフィールド
 
 - `cryptoInfos`、`encryptionInfo`、ATS の `attributes` は、読み込んで保持し、そのまま書き出す。値を解釈したり、生成したりはしない（v1 の範囲外）
@@ -290,7 +304,7 @@ EvidenceRecord::Error < StandardError
 
 - 依存は `openssl`（`OpenSSL::ASN1`、`OpenSSL::Timestamp`、`OpenSSL::X509`）と `digest`。どちらも標準ライブラリ
 - 対応する Ruby は 3.3 以降（ct_merkle と同じ）。RBS はつけない
-- 値オブジェクトは `Data` で実装し、frozen にする
+- 値オブジェクトは frozen にする。データ構造クラス（`Record` など）は、`Data` ではなく普通のクラスで実装する。`Data#with` などでフィールドを変えると、保持している DER と中身が食い違うため。外から `new` は呼べないようにし、`from_der` だけを公開する（生成と更新では、内部用のメソッドで DER を組み立ててから `from_der` で読み直す）
 - スレッドセーフではない（`Generator` と各更新オブジェクトは状態を持つ）
 
 ## 9. テストの方針
@@ -367,6 +381,9 @@ EvidenceRecord::Error < StandardError
   - 対応しない（4.4）
 - [x] Bouncy Castle との相互運用テストを CI に入れるか
   - 入れる。双方向で確認する（9 章）
+- [ ] `Generator#build` などが受け取る TSA 応答の型（7.2）
+  - Ruby の `OpenSSL::Timestamp::Response` は、`crls` に OCSP 応答を含む応答を解析できない（BSI のテストデータの TSA 応答も読めない）。`OpenSSL::Timestamp::Response` だけを受け取る API だと、そうした TSA を使えない
+  - 案: TimeStampResp の DER（String）も受け取り、トークンは自前で取り出して DER に直す。生成の実装の前に決める
 - [ ] タイムスタンプ更新で、最後の Chain の全 timeStamp を対象に含める方針（3.4）が、Bouncy Castle の実装と実際に互換か
   - 実装時に、相互運用テストで確認する
 - [x] `verify` に結果オブジェクト（各 ATS の genTime、使ったアルゴリズムなど）を返す版を用意するか
