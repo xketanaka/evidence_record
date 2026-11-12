@@ -332,7 +332,8 @@ EvidenceRecord::Error < StandardError
 ## 8. 実装の方針
 
 - 依存は `openssl`（`OpenSSL::ASN1`、`OpenSSL::Timestamp`、`OpenSSL::X509`）と `digest`。どちらも標準ライブラリ
-- 対応する Ruby は 3.3 以降（ct_merkle と同じ）。RBS はつけない
+- 対応する Ruby は 3.4 以降。RBS はつけない
+  - Ruby 3.3 に同梱の openssl gem（3.2 系）では、`OpenSSL::X509::Store#time=` が `OpenSSL::Timestamp::Response#verify` に効かず、TST の証明書を現在時刻で検証してしまう（openssl gem 3.3.0 で修正）。`TimestampValidator::OpenSSL`（5.3）が正しく動かないため、3.3 は対象外にする（依存を標準ライブラリだけにする方針を保つため、openssl gem の新しい版を依存に加えることはしない）
 - 値オブジェクトは frozen にする。データ構造クラス（`Record` など）は、`Data` ではなく普通のクラスで実装する。`Data#with` などでフィールドを変えると、保持している DER と中身が食い違うため。外から `new` は呼べないようにし、`from_der` だけを公開する（生成と更新では、内部用のメソッドで DER を組み立ててから `from_der` で読み直す）
 - スレッドセーフではない（`Generator` と各更新オブジェクトは状態を持つ）
 

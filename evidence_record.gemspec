@@ -14,7 +14,7 @@ Gem::Specification.new do |spec|
                      "beyond the Ruby standard library."
   spec.homepage = "https://github.com/xketanaka/evidence_record"
   spec.license = "MIT"
-  spec.required_ruby_version = ">= 3.3"
+  spec.required_ruby_version = ">= 3.4"
 
   spec.files = Dir["lib/**/*.rb", "LICENSE.txt", "README.md"]
   spec.require_paths = ["lib"]

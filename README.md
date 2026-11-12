@@ -30,7 +30,6 @@ Docker を使う場合：
 ```bash
 docker compose run --rm test        # Ruby 4.0
 docker compose run --rm test-3.4    # Ruby 3.4
-docker compose run --rm test-3.3    # Ruby 3.3
 docker compose run --rm test bundle exec rake test:fetch_vectors
 ```
 
