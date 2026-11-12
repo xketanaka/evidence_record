@@ -15,6 +15,8 @@ require_relative "evidence_record/chain"
 require_relative "evidence_record/record"
 require_relative "evidence_record/verifier"
 require_relative "evidence_record/timestamp_validator"
+require_relative "evidence_record/timestamp_exchange"
+require_relative "evidence_record/generator"
 
 # Evidence Record Syntax (ERS), RFC 4998.
 module EvidenceRecord

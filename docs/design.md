@@ -69,8 +69,12 @@ records[0].to_der
 ```
 
 - TSA とのやりとりを 2 段階にしたのは、Bouncy Castle と同じ理由による。HTTP クライアント、認証、リトライなどは TSA ごとに違い、gem が抱えると範囲が広がりすぎる。ct_merkle の「外部とのやりとりは利用者に任せる」方針とも合う
-- `build` では、応答の状態（granted かどうか）、messageImprint のアルゴリズム、値（ハッシュツリーのルート）を確認し、一致しなければ例外にする
-- `build` の後に `add` するのはエラーにする（Bouncy Castle には「要求を作った後にデータを追加すると不整合になる」ことを確かめるテストがある）
+- `build` では、応答の状態（granted / grantedWithMods かどうか）、messageImprint のアルゴリズム、値（ハッシュツリーのルート）を確認し、一致しなければ `TimestampResponseError` にする。拒否された場合は、TSA が返した status と statusString をメッセージに含める
+  - `timestamp_request` に `nonce:` / `policy_id:` を渡した場合は、応答のトークンの値が同じことも確認する（RFC 3161 §2.4.2 で要求者が確認すべきとされている）
+  - トークンの署名は確認しない（信頼する証明書を `Generator` は知らないため）。必要なら、できた `Record` を `verify` する
+- `timestamp_request` の `cert_requested:` は既定で `true`。後で検証するときに TSA の証明書が必要になるため
+- データは `add` の時点でハッシュし、データそのものは保持しない
+- `timestamp_request` または `build` の後に `add` するのは `EvidenceRecord::Error` にする（Bouncy Castle には「要求を作った後にデータを追加すると不整合になる」ことを確かめるテストがある）。データを 1 つも追加せずに `timestamp_request` / `build` を呼んだ場合も同じ
 - **ER は `build` のときに全部の葉について一度に作る**。ハッシュツリーは保存しないので、後から特定の葉の ER を作り直すことはできない
   - ER を後から作れるようにするには、ct_merkle の `Tree` と同様にハッシュツリーの保存が必要になる。ct_merkle も v1 では `Tree` を保存できないので、それにそろえてシンプルにした
   - 規模が大きい場合は、ツリーとタイムスタンプを保存し、要求されたときに ER を作るほうが有利な面もある。全 ER がタイムスタンプ（BSI のテストデータで 1 つ約 5〜6KB）を複製して持つことや、タイムスタンプ更新で全 ER に書き込む必要がないためである。後から追加できるように、`HashTree` は `Generator` から切り離して公開しておく

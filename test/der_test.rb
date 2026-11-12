@@ -95,4 +95,29 @@ class DERTest < Minitest::Test
       assert_equal "a" * n, DER.parse(der, "x").content
     end
   end
+
+  def normalize(hex)
+    DER.normalize_lengths([hex.delete(" ")].pack("H*"), "test").unpack1("H*")
+  end
+
+  def test_normalize_lengths
+    # indefinite lengths, nested
+    assert_equal "3005a003020101", normalize("30 80 a0 80 02 01 01 00 00 00 00")
+    # long-form lengths that are not needed
+    assert_equal "3003040161", normalize("30 82 00 04 04 81 01 61")
+    # DER stays as it is; other non-DER encodings are not touched
+    assert_equal "0101 01".delete(" "), normalize("01 01 01")
+    assert_equal "24060401610401 62".delete(" "), normalize("24 06 04 01 61 04 01 62")
+  end
+
+  def test_normalize_lengths_rejects_broken_input
+    [
+      "04 80 61 00 00",       # indefinite length on a primitive element
+      "30 80 02 01 01",       # missing end-of-contents
+      "30 03 02 01 01 00",    # trailing data
+      "30 05 30 80 02 01 01", # end-of-contents outside the parent
+    ].each do |hex|
+      assert_raises(EvidenceRecord::ParseError, hex) { normalize(hex) }
+    end
+  end
 end

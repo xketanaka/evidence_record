@@ -194,6 +194,79 @@ module EvidenceRecord
       nodes.each_cons(2).all? { |a, b| (a.raw <=> b.raw) <= 0 }
     end
 
+    # --- normalizing lengths ---------------------------------------------------
+
+    # Rewrites indefinite lengths and lengths not in their shortest form as
+    # definite, shortest lengths. Nothing else is changed: tags and the
+    # contents of primitive elements are copied as they are, so the result is
+    # DER only if the input was DER apart from its lengths (check it with
+    # parse). Used for time-stamp tokens from TSAs (docs/design.md 6).
+    def normalize_lengths(bytes, what)
+      raise ArgumentError, "#{what} must be a String, got #{bytes.class}" unless bytes.is_a?(String)
+
+      bytes = bytes.b
+      out, pos = normalize(bytes, 0, bytes.bytesize, 0, what)
+      raise ParseError, "#{what}: #{bytes.bytesize - pos} bytes of trailing data" unless pos == bytes.bytesize
+
+      out
+    end
+
+    def normalize(bytes, pos, limit, depth, what)
+      raise ParseError, "#{what}: nested too deeply" if depth > MAX_DEPTH
+
+      start = pos
+      id = byte_at(bytes, pos, limit, what)
+      pos += 1
+      _, pos = read_high_tag(bytes, pos, limit, what) if (id & 0x1f) == 0x1f
+      identifier = bytes.byteslice(start, pos - start)
+      constructed = id.anybits?(0x20)
+
+      first = byte_at(bytes, pos, limit, what)
+      if first == 0x80
+        raise ParseError, "#{what}: indefinite length on a primitive element" unless constructed
+
+        pos += 1
+        content = "".b
+        loop do
+          raise ParseError, "#{what}: missing end-of-contents" if limit - pos < 2
+          break if bytes.byteslice(pos, 2) == "\x00\x00".b
+
+          child, pos = normalize(bytes, pos, limit, depth + 1, what)
+          content << child
+        end
+        return [identifier + encode_length(content.bytesize) + content, pos + 2]
+      end
+
+      length, pos = read_any_length(bytes, pos, limit, what)
+      raise ParseError, "#{what}: truncated" if limit - pos < length
+
+      content = if constructed
+                  children = "".b
+                  child_pos = pos
+                  while child_pos < pos + length
+                    child, child_pos = normalize(bytes, child_pos, pos + length, depth + 1, what)
+                    children << child
+                  end
+                  children
+                else
+                  bytes.byteslice(pos, length)
+                end
+      [identifier + encode_length(content.bytesize) + content, pos + length]
+    end
+
+    # A definite length in any form (BER).
+    def read_any_length(bytes, pos, limit, what)
+      first = byte_at(bytes, pos, limit, what)
+      pos += 1
+      return [first, pos] if first < 0x80
+
+      count = first & 0x7f
+      raise ParseError, "#{what}: length too large" if count > 8 || first == 0xff
+      raise ParseError, "#{what}: truncated" if limit - pos < count
+
+      [bytes.byteslice(pos, count).unpack1("H*").to_i(16), pos + count]
+    end
+
     # --- reading values ------------------------------------------------------
 
     def expect(node, what, tag)
