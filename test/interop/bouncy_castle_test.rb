@@ -106,6 +106,15 @@ class BouncyCastleTest < Minitest::Test
     [record_path, @cert_path, kind, *paths].join(" ")
   end
 
+  # このライブラリで生成・更新した Evidence Record を、Bouncy Castle で検証する。
+  #
+  # records_made_here の各 ER（生成、タイムスタンプ更新、ハッシュツリー更新）について、
+  # - まずこのライブラリ自身で検証できることを確認する
+  # - Bouncy Castle（ErsInterop.java verify）で、対象のデータなら検証に成功し（OK）、
+  #   別のデータなら失敗する（NG）ことを確認する
+  # Bouncy Castle 側では、ER の読み込み時の Chain の確認、validatePresent（データが含まれるか）、
+  # validate（最後のタイムスタンプの署名）に加えて、Bouncy Castle が DER で書き直した
+  # バイト列が元と一致すること（DER の互換性）も確認している。
   def test_records_made_here_verify_with_bouncy_castle
     @cert_path = file("tsa.cer", @tsa.certificate.to_der)
     records = records_made_here
@@ -127,6 +136,15 @@ class BouncyCastleTest < Minitest::Test
 
   # --- records made by Bouncy Castle, verified here ----------------------------------------
 
+  # Bouncy Castle で生成・更新した Evidence Record を、このライブラリで検証する。
+  #
+  # Bouncy Castle（ErsInterop.java generate）が、自前のテスト用 TSA で作った ER
+  # （生成、単独のデータ、応答を使い回したタイムスタンプ更新、SHA-512 へのハッシュツリー更新）
+  # について、
+  # - Chain と ArchiveTimeStamp の数が想定どおりであること
+  # - 対象のデータなら、署名の検証まで含めて verify! に成功すること
+  # - 別のデータなら verify が false になること
+  # を確認する。
   def test_records_made_by_bouncy_castle_verify_here
     BouncyCastle.run("generate", @dir)
     store = OpenSSL::X509::Store.new
@@ -150,8 +168,14 @@ class BouncyCastleTest < Minitest::Test
     end
   end
 
-  # The roots of Bouncy Castle and of this library are the same, so a TSA
-  # response for one can be used by the other.
+  # タイムスタンプを付ける値（ハッシュツリーのルート）が、Bouncy Castle とこのライブラリで
+  # 一致することを確認する。一致すれば、一方の要求に対する TSA の応答を他方でも使える。
+  #
+  # Bouncy Castle が作った ER のタイムスタンプの messageImprint と、同じデータや同じ ER から
+  # このライブラリで計算した値を、次の 3 つについて比べる。
+  # - 生成: Generator#root
+  # - タイムスタンプ更新: TimestampRenewal#root（init-2 を更新した ts-2 の 2 つ目のタイムスタンプ）
+  # - ハッシュツリー更新: HashTreeRenewal#root（ts-2 を更新した hash-2 の 2 つ目の Chain）
   def test_same_roots_as_bouncy_castle
     BouncyCastle.run("generate", @dir)
     bc = ER::Record.from_der(File.binread(File.join(@dir, "init-0.ers")))
