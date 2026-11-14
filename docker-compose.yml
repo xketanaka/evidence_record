@@ -2,6 +2,7 @@
 #   docker compose run --rm test                            # run the tests on Ruby 4.0
 #   docker compose run --rm test-3.4                        # run the tests on Ruby 3.4
 #   docker compose run --rm test bundle exec rake test:fetch_vectors
+#   docker compose run --rm interop                         # the interoperability tests with Bouncy Castle
 #   docker compose run --rm test bash                       # open a shell
 x-common: &common
   # Run as the host user so files written to the bind mount (Gemfile.lock,
@@ -27,3 +28,15 @@ services:
       args:
         RUBY_VERSION: "3.4"
     image: evidence_record-dev:3.4
+
+  # Ruby 4.0 with a JDK: fetches the Bouncy Castle jars and runs
+  # the interoperability tests.
+  interop:
+    <<: *common
+    build:
+      context: .
+      args:
+        RUBY_VERSION: "4.0"
+        INSTALL_JDK: "true"
+    image: evidence_record-dev:4.0-jdk
+    command: ["sh", "-c", "bundle exec rake test:fetch_bouncy_castle && bundle exec rake test:interop"]

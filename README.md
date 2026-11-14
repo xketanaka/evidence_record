@@ -31,6 +31,7 @@ Docker を使う場合：
 docker compose run --rm test        # Ruby 4.0
 docker compose run --rm test-3.4    # Ruby 3.4
 docker compose run --rm test bundle exec rake test:fetch_vectors
+docker compose run --rm interop     # Bouncy Castle との相互運用テスト（JDK 入りのイメージ）
 ```
 
 ## ライセンス

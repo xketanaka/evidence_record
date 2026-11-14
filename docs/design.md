@@ -377,11 +377,20 @@ EvidenceRecord::Error < StandardError
     - このライブラリで生成・更新した ER を、Bouncy Castle で検証する（`validatePresent` と `validate`）
     - Bouncy Castle で生成・更新した ER を、このライブラリで検証する
   - 確認したいことの例: タイムスタンプ更新の方針（3.4）、ハッシュツリー更新の連結順（3.5）、ルートの値（4.2）、DER の互換性
-  - 構成（案）
-    - Bouncy Castle を呼ぶ小さな Java プログラムを `interop/` に置く。Java の単一ファイル実行（`java ErsInterop.java`）で動かし、ビルドツールは使わない
-    - Bouncy Castle の jar（bcprov / bcutil / bcpkix）は、Maven Central からバージョンを固定して取得する
-    - TSA は両方ともテスト用の鍵で作る。ER と TSA の証明書をファイルでやりとりする
-    - 通常のテストとは別の CI ジョブ（Java をセットアップする）にする。手元では Java がなければスキップし、docker compose のサービスとしても実行できるようにする
+  - 構成
+    - Bouncy Castle を呼ぶ小さな Java プログラムを `interop/ErsInterop.java` に置く。Java の単一ファイル実行（`java ErsInterop.java`）で動かし、ビルドツールは使わない
+      - `verify MANIFEST`: 一覧の ER をそれぞれ Bouncy Castle で検証する。`ERSEvidenceRecord` の読み込み（Chain 内のタイムスタンプ更新の確認）、`validatePresent`、`validate`（最後の TST の署名と、Chain の全 timeStamp が含まれていること）に加えて、Bouncy Castle が DER で書き直したバイト列が元と一致することも確認する
+      - `generate DIR`: Bouncy Castle とそのテスト用 TSA で、生成、タイムスタンプ更新（応答の使い回しを含む）、ハッシュツリー更新をした ER を書き出す
+    - Bouncy Castle の jar（bcprov / bcutil / bcpkix）は、`rake test:fetch_bouncy_castle` で Maven Central から取得する。バージョン（1.87）と SHA-256 を `test/support/bouncy_castle.rb` に固定する
+      - 1.86 以前は、`ERSDataGroup` のハッシュの計算に不具合があるため使わない
+    - TSA は両方ともテスト用の鍵で作る。ER と証明書、データはファイルでやりとりする
+    - Ruby 側のテストは `test/interop/bouncy_castle_test.rb`。通常の `rake test` には含めず、`rake test:interop` で実行する。Java か jar がなければスキップする
+    - CI では、Java をセットアップする別のジョブ（`interop`）で実行する。手元では `docker compose run --rm interop` で実行できる
+  - 確認した結果（Bouncy Castle 1.87）
+    - このライブラリで生成・更新した ER（SHA-256/384/512、単独のデータ、データオブジェクトグループ、タイムスタンプ更新 2 回と応答の使い回し、ハッシュツリー更新とその後のタイムスタンプ更新）は、すべて Bouncy Castle で検証でき、別のデータでは失敗する。DER のバイト列も Bouncy Castle の書き直しと一致する
+    - Bouncy Castle で生成・更新した ER は、すべてこのライブラリで検証できる。生成のルート、タイムスタンプ更新のルート（3.4）、ハッシュツリー更新のルート（3.5）も、このライブラリの計算と一致する
+    - メンバーが 1 つのデータオブジェクトグループは、Bouncy Castle ではグループとして検証できない（`ERSArchiveTimeStamp#checkContainsHashValue` は、グループなら最初の PartialHashtree に値が 2 つ以上あることを前提にしている）。そのようなグループのハッシュはメンバー単独のハッシュと同じで、ER も同じになるので、メンバーをデータオブジェクトとして渡せば検証できる。Bouncy Castle 自身が生成した場合も同じである
+    - テスト用 TSA（`OpenSSL::Timestamp::Factory`）は、`gen_time` に関わらず現在時刻を signingTime 属性に入れる。Bouncy Castle は signingTime と genTime の差が 60 秒以内であることを求めるので、相互運用テストでは genTime を現在時刻の近くにする
 
 ## 10. v1 で提供しないもの
 
@@ -427,7 +436,7 @@ EvidenceRecord::Error < StandardError
   - 入れる。双方向で確認する（9 章）
 - [x] `Generator#build` などが受け取る TSA 応答の型（7.2）
   - TimeStampResp のバイト列（String）を基本とし、`OpenSSL::Timestamp::Response` も受け取る。長さの書き方が BER の応答は受け付けて、トークンを DER に直してから ER に入れる（6 章）
-- [ ] タイムスタンプ更新で、最後の Chain の全 timeStamp を対象に含める方針（3.4）が、Bouncy Castle の実装と実際に互換か
-  - 実装時に、相互運用テストで確認する
+- [x] タイムスタンプ更新で、最後の Chain の全 timeStamp を対象に含める方針（3.4）が、Bouncy Castle の実装と実際に互換か
+  - 互換である。相互運用テストで、双方向に検証でき、ルートも一致することを確認した（9 章）
 - [x] `verify` に結果オブジェクト（各 ATS の genTime、使ったアルゴリズムなど）を返す版を用意するか
   - 用意しない。失敗した場所は例外の属性で、詳細は `Record` の属性で取得する（3.9）

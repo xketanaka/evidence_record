@@ -6,3 +6,5 @@
 Gemfile.lock
 # Downloaded by `rake test:fetch_vectors`; not redistributed (see docs/design.md).
 /test/fixtures/bsi/
+# Downloaded by `rake test:fetch_bouncy_castle`.
+/interop/lib/
