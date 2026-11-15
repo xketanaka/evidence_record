@@ -122,6 +122,45 @@ class RecordTest < Minitest::Test
     assert_equal DER.parse(record.to_der, "x").children.last.raw, record.archive_timestamp_sequence_der
   end
 
+  # Record, Chain, ArchiveTimeStamp and TimeStampToken are immutable: every
+  # value their readers return is frozen, down to the Strings and Times.
+  # (TimeStampToken#certificates builds new objects on every call.)
+  def test_values_are_frozen
+    rht = ER::ReducedHashtree.new([[h("a"), h("b")]])
+    ats = ER::ArchiveTimeStamp.build(timestamp: token(rht.root(:sha256).to_binary), reduced_hashtree: rht,
+                                     digest_algorithm: ER::DigestAlgorithm::SHA256)
+    attributes = DER.context(1, DER.sequence([DER.encode_oid("1.2.3"), "\x31\x00".b])) # [1] SET OF Attribute
+    ats = ER::ArchiveTimeStamp.from_der(DER.sequence(DER.parse(ats.to_der, "x").children.map(&:raw).insert(1, attributes)))
+    crypto_infos = DER.context(0, DER.sequence([DER.encode_oid("1.2.3"), "\x31\x00".b]))
+    encryption_info = DER.context(1, DER.encode_oid("1.2.4") + DER.encode_integer(1))
+    record = ER::Record.from_der(record_der(DER.sequence([DER.sequence([ats.to_der])]), extra: [crypto_infos, encryption_info]))
+    chain = record.chains[0]
+    ats = chain.archive_timestamps[0]
+    tst = ats.timestamp
+    refute_nil ats.attributes
+
+    values = {
+      "Record" => record, "Record#to_der" => record.to_der, "Record#chains" => record.chains,
+      "Record#digest_algorithm_oids" => record.digest_algorithm_oids,
+      "Record#crypto_infos" => record.crypto_infos, "Record#encryption_info" => record.encryption_info,
+      "Record#proven_time" => record.proven_time,
+      "Chain" => chain, "Chain#to_der" => chain.to_der, "Chain#archive_timestamps" => chain.archive_timestamps,
+      "ArchiveTimeStamp" => ats, "ArchiveTimeStamp#to_der" => ats.to_der,
+      "ArchiveTimeStamp#digest_algorithm_oid" => ats.digest_algorithm_oid,
+      "ArchiveTimeStamp#attributes" => ats.attributes, "ArchiveTimeStamp#reduced_hashtree" => ats.reduced_hashtree,
+      "TimeStampToken" => tst, "TimeStampToken#to_der" => tst.to_der, "TimeStampToken#gen_time" => tst.gen_time,
+      "TimeStampToken#message_imprint" => tst.message_imprint, "TimeStampToken#hash_algorithm_oid" => tst.hash_algorithm_oid,
+      "TimeStampToken#policy_id" => tst.policy_id,
+    }
+    values["Record#digest_algorithm_oids[0]"] = record.digest_algorithm_oids[0]
+    values.each { |name, value| assert value.frozen?, "#{name} is not frozen" }
+
+    # Time#localtime would change the time zone of the token's genTime.
+    assert_raises(FrozenError) { tst.gen_time.localtime("+09:00") }
+    assert_equal "+09:00", tst.gen_time.getlocal("+09:00").strftime("%:z")
+    assert tst.gen_time.utc?
+  end
+
   def test_related_to
     shared = ER::ArchiveTimeStamp.build(timestamp: token)
     a = ER::Record.build([ER::Chain.build([shared])])

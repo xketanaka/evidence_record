@@ -288,6 +288,7 @@ module EvidenceRecord
       node.children
     end
 
+    # The OID as a frozen dotted String.
     def oid(node, what)
       c = expect(node, what, OBJECT_IDENTIFIER).content
       ids = []
@@ -300,7 +301,7 @@ module EvidenceRecord
         value = 0
       end
       first = [ids[0] / 40, 2].min
-      [first, ids[0] - (first * 40), *ids[1..]].join(".")
+      [first, ids[0] - (first * 40), *ids[1..]].join(".").freeze
     end
 
     def integer(node, what)
@@ -313,6 +314,9 @@ module EvidenceRecord
       expect(node, what, OCTET_STRING).content
     end
 
+    # A frozen UTC Time, keeping fractions of a second. Frozen because Time
+    # has methods that change it (Time#localtime), and the Time is held by
+    # immutable objects (TimeStampToken#gen_time).
     def generalized_time(node, what)
       m = GENERALIZED_TIME_PATTERN.match(expect(node, what, GENERALIZED_TIME).content)
       year, month, day, hour, minute, second = m.captures.first(6).map(&:to_i)
@@ -323,7 +327,7 @@ module EvidenceRecord
         raise ParseError, "#{what}: invalid time"
       end
 
-      time
+      time.freeze
     rescue ArgumentError
       raise ParseError, "#{what}: invalid time"
     end
